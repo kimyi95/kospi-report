@@ -85,10 +85,10 @@ def get_top100_kospi():
     return df
 
 
-def get_stock_recent_returns(code):
+def get_stock_price_history(code, pages=26):
     dfs = []
 
-    for page in [1, 2]:
+    for page in range(1, pages + 1):
         url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
         html = get_html(url)
         df = pd.read_html(StringIO(html))[0].dropna()
@@ -97,13 +97,15 @@ def get_stock_recent_returns(code):
     df = pd.concat(dfs, ignore_index=True)
     df["날짜"] = df["날짜"].astype(str)
     df["종가"] = df["종가"].apply(to_int)
-
     df = df[df["종가"] > 0].copy()
 
-    # 네이버 일별시세는 최신일이 위에 있으므로
-    # 오늘 수익률 = 오늘 종가 / 다음 행의 종가 - 1
-    df["등락률"] = (df["종가"] / df["종가"].shift(-1) - 1) * 100
+    return df
 
+
+def get_stock_recent_returns(code):
+    df = get_stock_price_history(code, pages=2)
+
+    df["등락률"] = (df["종가"] / df["종가"].shift(-1) - 1) * 100
     df = df.dropna(subset=["등락률"])
 
     return dict(zip(df["날짜"], df["등락률"]))
@@ -129,6 +131,37 @@ def get_recent_outperform_count(code, kospi_recent_returns, report_date):
         return "확인불가"
 
 
+def get_high_status(code, current_price):
+    try:
+        df = get_stock_price_history(code, pages=26)
+
+        if df.empty:
+            return "확인불가"
+
+        recent_250 = df.head(250)
+
+        if len(recent_250) < 60:
+            return "확인불가"
+
+        high_250 = recent_250["종가"].max()
+
+        if high_250 <= 0 or current_price <= 0:
+            return "확인불가"
+
+        gap_pct = (current_price / high_250 - 1) * 100
+
+        if current_price >= high_250:
+            return "🚀 돌파"
+
+        if current_price >= high_250 * 0.97:
+            return f"🔥 근접({gap_pct:.1f}%)"
+
+        return f"{gap_pct:.1f}%"
+
+    except:
+        return "확인불가"
+
+
 date, kospi_return = get_kospi_return()
 kospi_recent_returns = get_kospi_recent_returns()
 
@@ -149,6 +182,11 @@ result["최근2주출현"] = result["종목코드"].apply(
     lambda code: get_recent_outperform_count(code, kospi_recent_returns, date)
 )
 
+result["전고점상태"] = result.apply(
+    lambda row: get_high_status(row["종목코드"], row["현재가"]),
+    axis=1
+)
+
 rows_html = ""
 
 for i, row in enumerate(result.itertuples(), 1):
@@ -166,6 +204,7 @@ for i, row in enumerate(result.itertuples(), 1):
         <td>{row.현재가:,}</td>
         <td>{row.등락률:+.2f}%</td>
         <td>{recent_text}</td>
+        <td>{row.전고점상태}</td>
     </tr>
     """
 
@@ -176,6 +215,16 @@ strong_html = ""
 
 for i, row in enumerate(valid_counts.itertuples(), 1):
     strong_html += f"<li>{i}. {row.종목명} - 최근 2주 {row.최근2주출현}회</li>"
+
+breakout = result[result["전고점상태"].astype(str).str.contains("돌파|근접", na=False)]
+
+breakout_html = ""
+
+if breakout.empty:
+    breakout_html = "<li>전고점 돌파/근접 종목 없음</li>"
+else:
+    for row in breakout.itertuples():
+        breakout_html += f"<li>{row.종목명} - {row.전고점상태}</li>"
 
 html_body = f"""
 <html>
@@ -194,6 +243,7 @@ html_body = f"""
 <th>현재가</th>
 <th>등락률</th>
 <th>최근2주출현</th>
+<th>전고점상태</th>
 </tr>
 
 {rows_html}
@@ -207,6 +257,11 @@ html_body = f"""
 {strong_html}
 </ul>
 
+<h3>전고점 돌파/근접 종목</h3>
+<ul>
+{breakout_html}
+</ul>
+
 <br>
 
 <p><b>선별 기준</b></p>
@@ -216,6 +271,7 @@ html_body = f"""
 </ul>
 
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
+<p>※ 전고점상태 = 최근 약 250거래일 최고 종가 대비 위치입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
 <p>※ 수급/뉴스는 네이버 구조상 불안정하여 제외했습니다.</p>
 <p>※ 투자 참고용 자료입니다.</p>
