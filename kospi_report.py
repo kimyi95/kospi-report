@@ -85,7 +85,7 @@ def get_top100_kospi():
     return df
 
 
-def get_stock_price_history(code, pages=26):
+def get_stock_price_history(code, pages=10):
     dfs = []
 
     for page in range(1, pages + 1):
@@ -133,7 +133,7 @@ def get_recent_outperform_count(code, kospi_recent_returns, report_date):
 
 def get_high_status(code, current_price):
     try:
-        df = get_stock_price_history(code, pages=26)
+        df = get_stock_price_history(code, pages=10)
 
         if df.empty:
             return "확인불가"
