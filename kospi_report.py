@@ -31,21 +31,18 @@ def to_float_pct(x):
 
 def to_int(x):
     try:
-        s = str(x)
+        s = str(x).strip()
+        s = s.split()[0]
         s = s.replace(",", "")
         s = s.replace("+", "")
         s = s.replace("상한가", "")
         s = s.replace("하한가", "")
         s = s.replace("보합", "")
-        s = s.strip()
 
-        digits = ""
-        for ch in s:
-            if ch.isdigit():
-                digits += ch
+        return int(float(s))
 
-        if digits == "":
-            return 0
+    except:
+        return 0
 
         return int(digits)
 
