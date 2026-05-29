@@ -1,31 +1,25 @@
-from datetime import datetime
-from email.mime.text import MIMEText
-import os
-import smtplib
+name: KOSPI Report
 
-msg = MIMEText(
-    f"""
-KOSPI 상대강세 리포트
+on:
+  schedule:
+    - cron: '50 6 * * 1-5'
+  workflow_dispatch:
 
-생성일시:
-{datetime.now()}
+jobs:
+  send:
+    runs-on: ubuntu-latest
 
-(테스트 메일)
+    steps:
+      - uses: actions/checkout@v4
 
-이메일 자동 발송이 정상 동작합니다.
-"""
-)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-msg["Subject"] = "KOSPI 리포트 테스트"
-msg["From"] = os.environ["EMAIL_ADDRESS"]
-msg["To"] = os.environ["RECEIVER_EMAIL"]
+      - run: pip install -r requirements.txt
 
-server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-
-server.login(
-    os.environ["EMAIL_ADDRESS"],
-    os.environ["EMAIL_PASSWORD"]
-)
-
-server.send_message(msg)
-server.quit()
+      - run: python kospi_report.py
+        env:
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
