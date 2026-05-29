@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+HISTORY_FILE = "history.csv"
 
 
 def get_html(url, encoding="euc-kr"):
@@ -30,6 +31,13 @@ def to_int(x):
         return int(float(s))
     except:
         return 0
+
+
+def fmt_pct(x):
+    try:
+        return f"{float(x):+.2f}%"
+    except:
+        return "-"
 
 
 def get_kospi_return():
@@ -138,28 +146,133 @@ def get_high_status(code, current_price):
         if df.empty:
             return "확인불가"
 
-        recent_250 = df.head(250)
+        recent = df.head(100)
 
-        if len(recent_250) < 60:
+        if len(recent) < 40:
             return "확인불가"
 
-        high_250 = recent_250["종가"].max()
+        high_price = recent["종가"].max()
 
-        if high_250 <= 0 or current_price <= 0:
+        if high_price <= 0 or current_price <= 0:
             return "확인불가"
 
-        gap_pct = (current_price / high_250 - 1) * 100
+        gap_pct = (current_price / high_price - 1) * 100
 
-        if current_price >= high_250:
+        if current_price >= high_price:
             return "🚀 돌파"
 
-        if current_price >= high_250 * 0.97:
+        if current_price >= high_price * 0.97:
             return f"🔥 근접({gap_pct:.1f}%)"
 
         return f"{gap_pct:.1f}%"
 
     except:
         return "확인불가"
+
+
+def load_history():
+    if not os.path.exists(HISTORY_FILE):
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(HISTORY_FILE)
+    except:
+        return pd.DataFrame()
+
+
+def get_yesterday_from_history(history, today):
+    if history.empty or "날짜" not in history.columns:
+        return pd.DataFrame()
+
+    dates = sorted(history["날짜"].astype(str).unique())
+    previous_dates = [d for d in dates if d != today]
+
+    if not previous_dates:
+        return pd.DataFrame()
+
+    yesterday = previous_dates[-1]
+
+    return history[history["날짜"].astype(str) == yesterday].copy()
+
+
+def get_streak_count(stock_name, history, today_result):
+    try:
+        count = 0
+
+        if stock_name in set(today_result["종목명"].astype(str)):
+            count += 1
+        else:
+            return 0
+
+        if history.empty or "날짜" not in history.columns:
+            return count
+
+        hist = history.copy()
+        hist["날짜"] = hist["날짜"].astype(str)
+
+        dates = sorted(hist["날짜"].unique(), reverse=True)
+
+        for d in dates:
+            day_names = set(
+                hist[hist["날짜"] == d]["종목명"].astype(str)
+            )
+
+            if stock_name in day_names:
+                count += 1
+            else:
+                break
+
+        return count
+
+    except:
+        return "확인불가"
+
+
+def get_dropped_stocks(yesterday_df, today_all_df, today_result):
+    if yesterday_df.empty:
+        return pd.DataFrame()
+
+    today_names = set(today_result["종목명"].astype(str))
+
+    dropped = yesterday_df[
+        ~yesterday_df["종목명"].astype(str).isin(today_names)
+    ].copy()
+
+    if dropped.empty:
+        return dropped
+
+    today_lookup = today_all_df[["종목명", "등락률"]].copy()
+    today_lookup = today_lookup.rename(columns={"등락률": "오늘등락률"})
+
+    dropped = dropped.merge(
+        today_lookup,
+        on="종목명",
+        how="left"
+    )
+
+    return dropped
+
+
+def save_history(today, result):
+    save_df = result[[
+        "종목명",
+        "등락률",
+        "최근2주출현",
+        "연속출현",
+        "전고점상태"
+    ]].copy()
+
+    save_df.insert(0, "날짜", today)
+
+    history = load_history()
+
+    if not history.empty:
+        history = history[history["날짜"].astype(str) != str(today)]
+        history = pd.concat([history, save_df], ignore_index=True)
+    else:
+        history = save_df
+
+    history.to_csv(HISTORY_FILE, index=False, encoding="utf-8-sig")
 
 
 date, kospi_return = get_kospi_return()
@@ -175,7 +288,7 @@ etf_keywords = [
 for keyword in etf_keywords:
     df = df[~df["종목명"].str.contains(keyword, na=False)]
 
-result = df[df["등락률"] > kospi_return]
+result = df[df["등락률"] > kospi_return].copy()
 result = result.sort_values("등락률", ascending=False)
 
 result["최근2주출현"] = result["종목코드"].apply(
@@ -187,15 +300,30 @@ result["전고점상태"] = result.apply(
     axis=1
 )
 
+history = load_history()
+
+result["연속출현"] = result["종목명"].apply(
+    lambda name: get_streak_count(name, history, result)
+)
+
+yesterday_df = get_yesterday_from_history(history, date)
+dropped = get_dropped_stocks(yesterday_df, df, result)
+
 rows_html = ""
 
 for i, row in enumerate(result.itertuples(), 1):
     recent_count = row.최근2주출현
+    streak_count = row.연속출현
 
     if isinstance(recent_count, int):
         recent_text = f"{recent_count}회"
     else:
         recent_text = recent_count
+
+    if isinstance(streak_count, int):
+        streak_text = f"{streak_count}일"
+    else:
+        streak_text = streak_count
 
     rows_html += f"""
     <tr>
@@ -204,6 +332,7 @@ for i, row in enumerate(result.itertuples(), 1):
         <td>{row.현재가:,}</td>
         <td>{row.등락률:+.2f}%</td>
         <td>{recent_text}</td>
+        <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
     </tr>
     """
@@ -226,16 +355,46 @@ else:
     for row in breakout.itertuples():
         breakout_html += f"<li>{row.종목명} - {row.전고점상태}</li>"
 
+dropped_html = ""
+
+if dropped.empty:
+    dropped_html = """
+    <tr>
+        <td colspan="4">해당 종목 없음</td>
+    </tr>
+    """
+else:
+    for row in dropped.itertuples():
+        yesterday_return = getattr(row, "등락률", None)
+        today_return = getattr(row, "오늘등락률", None)
+        recent_count = getattr(row, "최근2주출현", "-")
+
+        if isinstance(recent_count, int):
+            recent_text = f"{recent_count}회"
+        else:
+            recent_text = str(recent_count)
+
+        dropped_html += f"""
+        <tr>
+            <td>{row.종목명}</td>
+            <td>{fmt_pct(yesterday_return)}</td>
+            <td>{fmt_pct(today_return)}</td>
+            <td>{recent_text}</td>
+        </tr>
+        """
+
 html_body = f"""
 <html>
 <body>
 
 <h2>KOSPI 상대강세 리포트</h2>
 
+<h3>1. 시장 요약</h3>
 <p><b>기준일 :</b> {date}</p>
 <p><b>KOSPI 등락률 :</b> {kospi_return:+.2f}%</p>
 <p><b>상대강세 종목 수 :</b> {len(result)}개</p>
 
+<h3>2. 상대강세 종목 전체표</h3>
 <table border="1" cellpadding="5" cellspacing="0">
 <tr>
 <th>순위</th>
@@ -243,6 +402,7 @@ html_body = f"""
 <th>현재가</th>
 <th>등락률</th>
 <th>최근2주출현</th>
+<th>연속출현</th>
 <th>전고점상태</th>
 </tr>
 
@@ -252,15 +412,28 @@ html_body = f"""
 
 <br>
 
-<h3>최근 2주 반복 출현 TOP 5</h3>
+<h3>3. 최근 2주 반복 출현 TOP 5</h3>
 <ul>
 {strong_html}
 </ul>
 
-<h3>전고점 돌파/근접 종목</h3>
+<h3>4. 전고점 돌파/근접 종목</h3>
 <ul>
 {breakout_html}
 </ul>
+
+<h3>5. 어제 있었지만 오늘 탈락한 종목</h3>
+<table border="1" cellpadding="5" cellspacing="0">
+<tr>
+<th>종목</th>
+<th>어제 등락률</th>
+<th>오늘 등락률</th>
+<th>최근2주출현</th>
+</tr>
+
+{dropped_html}
+
+</table>
 
 <br>
 
@@ -271,7 +444,9 @@ html_body = f"""
 </ul>
 
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
-<p>※ 전고점상태 = 최근 약 250거래일 최고 종가 대비 위치입니다.</p>
+<p>※ 연속출현 = 직전 리포트부터 오늘까지 연속으로 상대강세 목록에 포함된 일수입니다.</p>
+<p>※ 전고점상태 = 최근 약 100거래일 최고 종가 대비 위치입니다.</p>
+<p>※ 탈락 종목은 직전 리포트에는 있었으나 오늘 상대강세 조건을 만족하지 못한 종목입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
 <p>※ 수급/뉴스는 네이버 구조상 불안정하여 제외했습니다.</p>
 <p>※ 투자 참고용 자료입니다.</p>
@@ -279,6 +454,8 @@ html_body = f"""
 </body>
 </html>
 """
+
+save_history(date, result)
 
 msg = MIMEText(html_body, "html", _charset="utf-8")
 msg["Subject"] = f"[KOSPI 상대강세] {date}"
