@@ -44,10 +44,7 @@ def to_int(x):
     except:
         return 0
 
-        return int(digits)
 
-    except:
-        return 0
 
 
 def get_kospi_return():
