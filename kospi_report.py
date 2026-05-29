@@ -18,33 +18,18 @@ def get_html(url, encoding="euc-kr"):
 
 def to_float_pct(x):
     try:
-        return float(
-            str(x)
-            .replace("%", "")
-            .replace("+", "")
-            .replace(",", "")
-            .strip()
-        )
+        return float(str(x).replace("%", "").replace("+", "").replace(",", "").strip())
     except:
         return 0.0
 
 
 def to_int(x):
     try:
-        s = str(x).strip()
-        s = s.split()[0]
-        s = s.replace(",", "")
-        s = s.replace("+", "")
-        s = s.replace("상한가", "")
-        s = s.replace("하한가", "")
-        s = s.replace("보합", "")
-
+        s = str(x).strip().split()[0]
+        s = s.replace(",", "").replace("+", "")
         return int(float(s))
-
     except:
         return 0
-
-
 
 
 def get_kospi_return():
@@ -52,8 +37,23 @@ def get_kospi_return():
     html = get_html(url)
     df = pd.read_html(StringIO(html))[0].dropna()
     latest = df.iloc[0]
-
     return str(latest["날짜"]), to_float_pct(latest["등락률"])
+
+
+def get_kospi_recent_returns():
+    dfs = []
+
+    for page in [1, 2]:
+        url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
+        html = get_html(url)
+        df = pd.read_html(StringIO(html))[0].dropna()
+        dfs.append(df)
+
+    df = pd.concat(dfs, ignore_index=True)
+    df["날짜"] = df["날짜"].astype(str)
+    df["등락률"] = df["등락률"].apply(to_float_pct)
+
+    return dict(zip(df["날짜"].head(10), df["등락률"].head(10)))
 
 
 def get_top100_kospi():
@@ -85,7 +85,53 @@ def get_top100_kospi():
     return df
 
 
+def get_stock_recent_returns(code):
+    dfs = []
+
+    for page in [1, 2]:
+        url = f"https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
+        html = get_html(url)
+        df = pd.read_html(StringIO(html))[0].dropna()
+        dfs.append(df)
+
+    df = pd.concat(dfs, ignore_index=True)
+    df["날짜"] = df["날짜"].astype(str)
+    df["종가"] = df["종가"].apply(to_int)
+
+    df = df[df["종가"] > 0].copy()
+
+    # 네이버 일별시세는 최신일이 위에 있으므로
+    # 오늘 수익률 = 오늘 종가 / 다음 행의 종가 - 1
+    df["등락률"] = (df["종가"] / df["종가"].shift(-1) - 1) * 100
+
+    df = df.dropna(subset=["등락률"])
+
+    return dict(zip(df["날짜"], df["등락률"]))
+
+
+def get_recent_outperform_count(code, kospi_recent_returns, report_date):
+    try:
+        stock_returns = get_stock_recent_returns(code)
+
+        if report_date not in stock_returns:
+            return "확인불가"
+
+        count = 0
+
+        for date, kospi_ret in kospi_recent_returns.items():
+            if date in stock_returns:
+                if stock_returns[date] > kospi_ret:
+                    count += 1
+
+        return count
+
+    except:
+        return "확인불가"
+
+
 date, kospi_return = get_kospi_return()
+kospi_recent_returns = get_kospi_recent_returns()
+
 df = get_top100_kospi()
 
 etf_keywords = [
@@ -96,23 +142,40 @@ etf_keywords = [
 for keyword in etf_keywords:
     df = df[~df["종목명"].str.contains(keyword, na=False)]
 
-df["초과수익률"] = df["등락률"] - kospi_return
-
 result = df[df["등락률"] > kospi_return]
-result = result.sort_values("초과수익률", ascending=False)
+result = result.sort_values("등락률", ascending=False)
+
+result["최근2주출현"] = result["종목코드"].apply(
+    lambda code: get_recent_outperform_count(code, kospi_recent_returns, date)
+)
 
 rows_html = ""
 
 for i, row in enumerate(result.itertuples(), 1):
+    recent_count = row.최근2주출현
+
+    if isinstance(recent_count, int):
+        recent_text = f"{recent_count}회"
+    else:
+        recent_text = recent_count
+
     rows_html += f"""
     <tr>
         <td>{i}</td>
         <td>{row.종목명}</td>
         <td>{row.현재가:,}</td>
         <td>{row.등락률:+.2f}%</td>
-        <td>{row.초과수익률:+.2f}%p</td>
+        <td>{recent_text}</td>
     </tr>
     """
+
+valid_counts = result[result["최근2주출현"].apply(lambda x: isinstance(x, int))]
+valid_counts = valid_counts.sort_values("최근2주출현", ascending=False).head(5)
+
+strong_html = ""
+
+for i, row in enumerate(valid_counts.itertuples(), 1):
+    strong_html += f"<li>{i}. {row.종목명} - 최근 2주 {row.최근2주출현}회</li>"
 
 html_body = f"""
 <html>
@@ -130,12 +193,19 @@ html_body = f"""
 <th>종목명</th>
 <th>현재가</th>
 <th>등락률</th>
-<th>초과수익률</th>
+<th>최근2주출현</th>
 </tr>
 
 {rows_html}
 
 </table>
+
+<br>
+
+<h3>최근 2주 반복 출현 TOP 5</h3>
+<ul>
+{strong_html}
+</ul>
 
 <br>
 
@@ -145,6 +215,7 @@ html_body = f"""
 <li>KOSPI 하락일 : KOSPI보다 덜 하락했거나 상승</li>
 </ul>
 
+<p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
 <p>※ 수급/뉴스는 네이버 구조상 불안정하여 제외했습니다.</p>
 <p>※ 투자 참고용 자료입니다.</p>
