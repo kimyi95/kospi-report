@@ -1,2 +1,4 @@
-pykrx
 pandas
+requests
+lxml
+beautifulsoup4
