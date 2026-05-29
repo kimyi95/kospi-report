@@ -8,227 +8,191 @@ import requests
 from bs4 import BeautifulSoup
 
 HEADERS = {
-"User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0"
 }
 
+
 def get_html(url, encoding="euc-kr"):
-r = requests.get(
-url,
-headers=HEADERS,
-timeout=20
-)
-
-```
-r.encoding = encoding
-
-return r.text
-```
-
-def to_float_pct(x):
-
-```
-try:
-
-    return float(
-        str(x)
-        .replace("%", "")
-        .replace("+", "")
-        .replace(",", "")
-        .strip()
+    r = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=20
     )
 
-except:
+    r.encoding = encoding
 
-    return 0.0
-```
+    return r.text
+
+
+def to_float_pct(x):
+    try:
+        return float(
+            str(x)
+            .replace("%", "")
+            .replace("+", "")
+            .replace(",", "")
+            .strip()
+        )
+    except:
+        return 0.0
+
 
 def get_kospi_return():
-
-```
-url = (
-    "https://finance.naver.com/"
-    "sise/sise_index_day.naver"
-    "?code=KOSPI&page=1"
-)
-
-html = get_html(url)
-
-df = pd.read_html(
-    StringIO(html)
-)[0]
-
-df = df.dropna()
-
-latest = df.iloc[0]
-
-return (
-    str(latest["날짜"]),
-    to_float_pct(latest["등락률"])
-)
-```
-
-def get_top100_kospi():
-
-```
-all_df = []
-
-for page in [1, 2]:
-
     url = (
         "https://finance.naver.com/"
-        f"sise/sise_market_sum.naver"
-        f"?sosok=0&page={page}"
+        "sise/sise_index_day.naver"
+        "?code=KOSPI&page=1"
     )
 
     html = get_html(url)
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
-
-    table = pd.read_html(
+    df = pd.read_html(
         StringIO(html)
-    )[1]
+    )[0]
 
-    table = table.dropna(
-        subset=["종목명"]
+    df = df.dropna()
+
+    latest = df.iloc[0]
+
+    return (
+        str(latest["날짜"]),
+        to_float_pct(latest["등락률"])
     )
 
-    codes = []
 
-    for a in soup.select("a.tltle"):
+def get_top100_kospi():
+    all_df = []
 
-        href = a.get(
-            "href",
-            ""
+    for page in [1, 2]:
+        url = (
+            "https://finance.naver.com/"
+            f"sise/sise_market_sum.naver"
+            f"?sosok=0&page={page}"
         )
 
-        if "code=" in href:
+        html = get_html(url)
 
-            code = (
-                href.split("code=")[-1][:6]
-            )
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
 
-            codes.append(code)
+        table = pd.read_html(
+            StringIO(html)
+        )[1]
 
-    table = table.head(
-        len(codes)
-    ).copy()
+        table = table.dropna(
+            subset=["종목명"]
+        )
 
-    table["종목코드"] = (
-        codes[:len(table)]
+        codes = []
+
+        for a in soup.select("a.tltle"):
+            href = a.get("href", "")
+
+            if "code=" in href:
+                codes.append(
+                    href.split("code=")[-1][:6]
+                )
+
+        table = table.head(
+            len(codes)
+        ).copy()
+
+        table["종목코드"] = (
+            codes[:len(table)]
+        )
+
+        all_df.append(table)
+
+    df = pd.concat(
+        all_df,
+        ignore_index=True
     )
 
-    all_df.append(table)
+    df = df.head(100)
 
-df = pd.concat(
-    all_df,
-    ignore_index=True
-)
+    df["등락률"] = (
+        df["등락률"]
+        .apply(to_float_pct)
+    )
 
-df = df.head(100)
+    return df
 
-df["등락률"] = (
-    df["등락률"]
-    .apply(to_float_pct)
-)
-
-return df
-```
 
 date, kospi_return = (
-get_kospi_return()
+    get_kospi_return()
 )
 
 df = get_top100_kospi()
 
 etf_keywords = [
-"KODEX",
-"TIGER",
-"KOSEF",
-"KBSTAR",
-"ARIRANG",
-"HANARO",
-"SOL",
-"ACE"
+    "KODEX",
+    "TIGER",
+    "KOSEF",
+    "KBSTAR",
+    "ARIRANG",
+    "HANARO",
+    "SOL",
+    "ACE"
 ]
 
 for keyword in etf_keywords:
-
-```
-df = df[
-    ~df["종목명"]
-    .str.contains(
-        keyword,
-        na=False
-    )
-]
-```
+    df = df[
+        ~df["종목명"]
+        .str.contains(
+            keyword,
+            na=False
+        )
+    ]
 
 df["초과수익률"] = (
-df["등락률"]
-- kospi_return
+    df["등락률"]
+    - kospi_return
 )
 
-result = df[
-df["등락률"]
-> kospi_return
-]
+if kospi_return >= 0:
+    result = df[
+        df["등락률"] > kospi_return
+    ]
+else:
+    result = df[
+        df["등락률"] > kospi_return
+    ]
 
 result = result.sort_values(
-"초과수익률",
-ascending=False
+    "초과수익률",
+    ascending=False
 )
 
 rows_html = ""
 
 for i, row in enumerate(
-result.itertuples(),
-1
+    result.itertuples(),
+    1
 ):
-
-```
-rows_html += f"""
-<tr>
-    <td>{i}</td>
-    <td>{row.종목명}</td>
-    <td>{row.등락률:+.2f}%</td>
-    <td>{row.초과수익률:+.2f}%p</td>
-</tr>
-"""
-```
+    rows_html += f"""
+    <tr>
+        <td>{i}</td>
+        <td>{row.종목명}</td>
+        <td>{row.등락률:+.2f}%</td>
+        <td>{row.초과수익률:+.2f}%p</td>
+    </tr>
+    """
 
 html_body = f"""
-
 <html>
 <body>
 
-<h2>
-KOSPI 상대강세 리포트
-</h2>
+<h2>KOSPI 상대강세 리포트</h2>
 
-<p>
-기준일 :
-<b>{date}</b>
-</p>
+<p><b>기준일 :</b> {date}</p>
 
-<p>
-KOSPI 등락률 :
-<b>{kospi_return:+.2f}%</b>
-</p>
+<p><b>KOSPI 등락률 :</b> {kospi_return:+.2f}%</p>
 
-<p>
-상대강세 종목 수 :
-<b>{len(result)}개</b>
-</p>
+<p><b>상대강세 종목 수 :</b> {len(result)}개</p>
 
-<table
-border="1"
-cellpadding="5"
-cellspacing="0"
->
-
+<table border="1" cellpadding="5" cellspacing="0">
 <tr>
 <th>순위</th>
 <th>종목명</th>
@@ -242,63 +206,46 @@ cellspacing="0"
 
 <br>
 
-<p>
-선별 기준
-</p>
+<p><b>선별 기준</b></p>
 
 <ul>
-<li>
-KOSPI 상승일 :
-종목 등락률 >
-KOSPI 등락률
-</li>
-
-<li>
-KOSPI 하락일 :
-KOSPI보다 덜 하락
-또는 상승
-</li>
+<li>KOSPI 상승일 : 종목 등락률 > KOSPI 등락률</li>
+<li>KOSPI 하락일 : KOSPI보다 덜 하락했거나 상승</li>
 </ul>
 
-<p>
-※ 데이터 출처 :
-네이버 금융
-</p>
-
-<p>
-※ 투자 참고용
-</p>
+<p>※ 데이터 출처 : 네이버 금융</p>
+<p>※ 투자 참고용 자료입니다.</p>
 
 </body>
 </html>
 """
 
 msg = MIMEText(
-html_body,
-"html",
-_charset="utf-8"
+    html_body,
+    "html",
+    _charset="utf-8"
 )
 
 msg["Subject"] = (
-f"[KOSPI 상대강세] {date}"
+    f"[KOSPI 상대강세] {date}"
 )
 
 msg["From"] = (
-os.environ["EMAIL_ADDRESS"]
+    os.environ["EMAIL_ADDRESS"]
 )
 
 msg["To"] = (
-os.environ["RECEIVER_EMAIL"]
+    os.environ["RECEIVER_EMAIL"]
 )
 
 server = smtplib.SMTP_SSL(
-"smtp.gmail.com",
-465
+    "smtp.gmail.com",
+    465
 )
 
 server.login(
-os.environ["EMAIL_ADDRESS"],
-os.environ["EMAIL_PASSWORD"]
+    os.environ["EMAIL_ADDRESS"],
+    os.environ["EMAIL_PASSWORD"]
 )
 
 server.send_message(msg)
