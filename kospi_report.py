@@ -1,123 +1,95 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.text import MIMEText
+from io import StringIO
 import os
 import smtplib
+import requests
+import pandas as pd
 
-from pykrx import stock
-
-
-def fmt_pct(x):
-    return f"{x:+.2f}%"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
-today_dt = datetime.now()
+def get_html(url):
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    r.encoding = "euc-kr"
+    r.raise_for_status()
+    return r.text
 
-date = None
-kospi = None
 
-for i in range(10):
-    check_date = (today_dt - timedelta(days=i)).strftime("%Y%m%d")
+def to_float_pct(x):
+    return float(str(x).replace("%", "").replace("+", "").strip())
 
-    try:
-        temp = stock.get_index_ohlcv_by_date(
-            check_date,
-            check_date,
-            "1001"
-        )
 
-        if not temp.empty:
-            date = check_date
-            kospi = temp
-            break
+def get_kospi_return():
+    url = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=1"
+    html = get_html(url)
+    tables = pd.read_html(StringIO(html))
+    df = tables[0].dropna()
+    latest = df.iloc[0]
+    return str(latest["날짜"]), to_float_pct(latest["등락률"])
 
-    except Exception:
-        pass
 
-if date is None:
-    raise Exception("최근 10일 내 KOSPI 데이터를 찾지 못했습니다.")
+def get_top100_kospi():
+    dfs = []
 
-kospi_return = float(kospi["등락률"].iloc[-1])
+    for page in [1, 2]:
+        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page={page}"
+        html = get_html(url)
+        tables = pd.read_html(StringIO(html))
+        df = tables[1]
+        df = df.dropna(subset=["종목명"])
+        dfs.append(df)
 
-cap = stock.get_market_cap_by_ticker(date, market="KOSPI")
-price = stock.get_market_ohlcv_by_ticker(date, market="KOSPI")
+    df = pd.concat(dfs, ignore_index=True).head(100)
+    df["등락률"] = df["등락률"].apply(to_float_pct)
+    return df
 
-df = cap.join(price[["등락률"]])
 
-df = (
-    df.sort_values("시가총액", ascending=False)
-    .head(100)
-)
-
-df["종목명"] = [
-    stock.get_market_ticker_name(ticker)
-    for ticker in df.index
-]
+date, kospi_return = get_kospi_return()
+df = get_top100_kospi()
 
 df["초과수익률"] = df["등락률"] - kospi_return
 
 result = df[df["등락률"] > kospi_return]
-
-result = result.sort_values(
-    "초과수익률",
-    ascending=False
-)
+result = result.sort_values("초과수익률", ascending=False)
 
 body = f"""
 KOSPI 상대강세 리포트
 
-기준일 : {date}
+기준일: {date}
+KOSPI 등락률: {kospi_return:+.2f}%
 
-KOSPI 등락률 : {fmt_pct(kospi_return)}
+선별 기준:
+- KOSPI 상승일: 종목 등락률 > KOSPI 등락률
+- KOSPI 하락일: KOSPI보다 덜 하락했거나 상승한 종목
 
-시총 상위 100개 중
-상대강세 종목 수 : {len(result)}개
+시총 상위 100개 중 상대강세 종목 수: {len(result)}개
 
 """
 
 if result.empty:
     body += "조건을 만족하는 종목이 없습니다.\n"
-
 else:
-    for i, (_, row) in enumerate(
-        result.iterrows(),
-        1
-    ):
+    for i, row in enumerate(result.itertuples(), 1):
         body += (
-            f"{i}. {row['종목명']} "
-            f"/ 등락률 {fmt_pct(row['등락률'])} "
-            f"/ 초과수익률 {fmt_pct(row['초과수익률'])}p\n"
+            f"{i}. {row.종목명} "
+            f"/ 등락률 {row.등락률:+.2f}% "
+            f"/ 초과수익률 {row.초과수익률:+.2f}%p\n"
         )
 
 body += """
 
-※ KOSPI 상승일 :
-종목 등락률 > KOSPI 등락률
-
-※ KOSPI 하락일 :
-KOSPI보다 덜 하락했거나 상승한 종목
-
-※ 투자 참고용 자료입니다.
+※ 데이터 출처: 네이버 금융
+※ 주요 뉴스/이슈는 현재 버전에는 포함되지 않습니다.
+※ 투자 참고용 자료이며 매수/매도 추천이 아닙니다.
 """
 
-msg = MIMEText(
-    body,
-    _charset="utf-8"
-)
-
+msg = MIMEText(body, _charset="utf-8")
 msg["Subject"] = f"[KOSPI 상대강세] {date}"
 msg["From"] = os.environ["EMAIL_ADDRESS"]
 msg["To"] = os.environ["RECEIVER_EMAIL"]
 
-server = smtplib.SMTP_SSL(
-    "smtp.gmail.com",
-    465
-)
-
-server.login(
-    os.environ["EMAIL_ADDRESS"],
-    os.environ["EMAIL_PASSWORD"]
-)
-
+server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+server.login(os.environ["EMAIL_ADDRESS"], os.environ["EMAIL_PASSWORD"])
 server.send_message(msg)
-
 server.quit()
