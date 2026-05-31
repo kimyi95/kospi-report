@@ -386,15 +386,21 @@ else:
 
 
 meaningful = result.copy()
+
+median_return = result["등락률"].median()
+
 meaningful = meaningful[
-    meaningful["종목명"].apply(is_meaningful_stock)
+    meaningful["최근2주출현"].apply(lambda x: isinstance(x, int) and x >= 4)
 ]
 
 meaningful = meaningful[
-    meaningful["최근2주출현"].apply(lambda x: isinstance(x, int) and x >= 5)
+    meaningful["등락률"] <= median_return
 ]
 
-meaningful = meaningful.sort_values(["최근2주출현", "등락률"], ascending=False)
+meaningful = meaningful.sort_values(
+    ["최근2주출현", "연속출현", "등락률"],
+    ascending=False
+).head(5)
 
 meaningful_html = ""
 
@@ -510,7 +516,7 @@ html_body = f"""
 <br>
 
 <h3>6. 의미있는 강세주</h3>
-<p>주도 업종과 직접 관련이 적지만 최근 2주 동안 반복적으로 강한 종목입니다.</p>
+<p>최근2주출현이 높지만 당일 급등 상위권은 아닌, 조용하게 강한 종목입니다.</p>
 <table border="1" cellpadding="5" cellspacing="0">
 <tr>
 <th>종목명</th>
@@ -552,7 +558,7 @@ html_body = f"""
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 연속출현 = 직전 리포트부터 오늘까지 연속으로 상대강세 목록에 포함된 일수입니다.</p>
 <p>※ 전고점상태 = 최근 약 100거래일 최고 종가 대비 위치입니다.</p>
-<p>※ 의미있는 강세주 = 주도 업종과 직접 관련이 적지만 최근2주출현이 높은 종목입니다.</p>
+<p>※ 의미있는 강세주 = 최근2주출현 4회 이상이면서 당일 등락률이 상대강세 종목 중간값 이하인 종목입니다.</p>
 <p>※ 탈락 종목은 직전 리포트에는 있었으나 오늘 상대강세 조건을 만족하지 못한 종목입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
 <p>※ 투자 참고용 자료입니다.</p>
