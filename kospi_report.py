@@ -152,10 +152,10 @@ def get_high_status(code, current_price):
         gap_pct = (current_price / high_price - 1) * 100
 
         if current_price >= high_price:
-            return "🚀 돌파"
+            return f"🚀 +{gap_pct:.1f}%"
 
         if current_price >= high_price * 0.97:
-            return f"🔥 근접({gap_pct:.1f}%)"
+            return f"🔥 {gap_pct:.1f}%"
 
         return f"{gap_pct:.1f}%"
     except:
@@ -256,7 +256,6 @@ def save_history(today, result):
 
 
 def make_reason(row):
-    name = str(row.종목명)
     reasons = []
 
     if isinstance(row.최근2주출현, int) and row.최근2주출현 >= 5:
@@ -265,10 +264,10 @@ def make_reason(row):
     if isinstance(row.연속출현, int) and row.연속출현 >= 2:
         reasons.append(f"연속출현 {row.연속출현}일")
 
-    if "돌파" in str(row.전고점상태):
-        reasons.append("전고점 돌파")
-    elif "근접" in str(row.전고점상태):
-        reasons.append("전고점 근접")
+    if "🚀" in str(row.전고점상태):
+        reasons.append(f"전고점 돌파({row.전고점상태})")
+    elif "🔥" in str(row.전고점상태):
+        reasons.append(f"전고점 근접({row.전고점상태})")
 
     if not reasons:
         reasons.append("상대강세 유지")
@@ -347,11 +346,15 @@ valid_counts = valid_counts.sort_values("최근2주출현", ascending=False).hea
 top5_html = ""
 
 for i, row in enumerate(valid_counts.itertuples(), 1):
+    streak_text = f"{row.연속출현}일" if isinstance(row.연속출현, int) else row.연속출현
+
     top5_html += f"""
     <tr>
         <td>{i}</td>
         <td>{row.종목명}</td>
         <td>{row.최근2주출현}회</td>
+        <td>{streak_text}</td>
+        <td>{row.전고점상태}</td>
     </tr>
     """
 
@@ -420,7 +423,7 @@ else:
         """
 
 
-breakout = result[result["전고점상태"].astype(str).str.contains("돌파|근접", na=False)]
+breakout = result[result["전고점상태"].astype(str).str.contains("🚀|🔥", na=False)]
 
 breakout_html = ""
 
@@ -477,7 +480,7 @@ html_body = f"""
 <th>등락률</th>
 <th>최근2주출현</th>
 <th>연속출현</th>
-<th>전고점상태</th>
+<th>전고점대비</th>
 </tr>
 {rows_html}
 </table>
@@ -490,6 +493,8 @@ html_body = f"""
 <th>순위</th>
 <th>종목명</th>
 <th>최근2주출현</th>
+<th>연속출현</th>
+<th>전고점대비</th>
 </tr>
 {top5_html}
 </table>
@@ -501,7 +506,7 @@ html_body = f"""
 <li><b>LG 그룹:</b> LG전자, LG씨엔에스, LG이노텍, LG 등 그룹주 강세 여부 확인</li>
 <li><b>AI / IT 인프라:</b> 삼성전기, 삼성에스디에스, 대덕전자, NAVER 등 강세 여부 확인</li>
 <li><b>자동차 전장:</b> 현대오토에버, 현대모비스, 현대차 등 강세 여부 확인</li>
-<li><b>전고점 돌파:</b> 전고점 돌파 종목이 많을수록 시장 에너지가 강한 것으로 해석</li>
+<li><b>전고점 돌파:</b> 전고점 대비 플러스 종목이 많을수록 시장 에너지가 강한 것으로 해석</li>
 </ul>
 
 <h3>5. 숨은 강세주 TOP3</h3>
@@ -531,7 +536,7 @@ html_body = f"""
 <ul>
 <li>최근2주출현 TOP 종목이 다음 거래일에도 유지되는지 확인</li>
 <li>연속출현이 증가하는 종목 우선 관찰</li>
-<li>전고점 돌파 종목이 돌파 후 버티는지 확인</li>
+<li>전고점 대비 플러스 종목이 돌파 후 버티는지 확인</li>
 <li>의미있는 강세주가 계속 상대강세 목록에 남는지 확인</li>
 <li>어제 있었지만 오늘 탈락한 종목은 강세 이탈 여부 확인</li>
 </ul>
@@ -557,7 +562,7 @@ html_body = f"""
 
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 연속출현 = 직전 리포트부터 오늘까지 연속으로 상대강세 목록에 포함된 일수입니다.</p>
-<p>※ 전고점상태 = 최근 약 100거래일 최고 종가 대비 위치입니다.</p>
+<p>※ 전고점대비 = 최근 약 100거래일 최고 종가 대비 현재가 위치입니다.</p>
 <p>※ 의미있는 강세주 = 최근2주출현 4회 이상이면서 당일 등락률이 상대강세 종목 중간값 이하인 종목입니다.</p>
 <p>※ 탈락 종목은 직전 리포트에는 있었으나 오늘 상대강세 조건을 만족하지 못한 종목입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
