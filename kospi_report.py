@@ -50,6 +50,7 @@ def get_kospi_return():
 
 def get_kospi_recent_returns():
     dfs = []
+
     for page in [1, 2]:
         url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
         html = get_html(url)
@@ -91,7 +92,7 @@ def get_top100_kospi():
     return df
 
 
-def get_stock_price_history(code, pages=10):
+def get_stock_price_history(code, pages=12):
     dfs = []
 
     for page in range(1, pages + 1):
@@ -123,43 +124,67 @@ def get_recent_outperform_count(code, kospi_recent_returns, report_date):
             return "확인불가"
 
         count = 0
+
         for date, kospi_ret in kospi_recent_returns.items():
             if date in stock_returns and stock_returns[date] > kospi_ret:
                 count += 1
 
         return count
+
     except:
         return "확인불가"
 
 
-def get_high_status(code, current_price):
+def get_high_info(code, current_price):
     try:
-        df = get_stock_price_history(code, pages=10)
+        df = get_stock_price_history(code, pages=12)
 
-        if df.empty:
-            return "확인불가"
+        if df.empty or len(df) < 40:
+            return "확인불가", "확인불가"
 
         recent = df.head(100)
-
-        if len(recent) < 40:
-            return "확인불가"
-
         high_price = recent["종가"].max()
 
         if high_price <= 0 or current_price <= 0:
-            return "확인불가"
+            return "확인불가", "확인불가"
 
         gap_pct = (current_price / high_price - 1) * 100
 
         if current_price >= high_price:
-            return f"🚀 +{gap_pct:.1f}%"
+            high_status = f"🚀 +{gap_pct:.1f}%"
+        elif current_price >= high_price * 0.97:
+            high_status = f"🔥 {gap_pct:.1f}%"
+        else:
+            high_status = f"{gap_pct:.1f}%"
 
-        if current_price >= high_price * 0.97:
-            return f"🔥 {gap_pct:.1f}%"
+        breakout_days = 0
 
-        return f"{gap_pct:.1f}%"
+        for i in range(len(df)):
+            if i + 40 >= len(df):
+                break
+
+            close_price = current_price if i == 0 else df.iloc[i]["종가"]
+            past = df.iloc[i + 1:i + 101]
+
+            if past.empty or len(past) < 40:
+                break
+
+            previous_high = past["종가"].max()
+
+            if previous_high <= 0:
+                break
+
+            if close_price >= previous_high:
+                breakout_days += 1
+            else:
+                break
+
+        breakout_text = "-" if breakout_days == 0 else f"{breakout_days}일"
+
+        return high_status, breakout_text
+
     except:
-        return "확인불가"
+        return "확인불가", "확인불가"
 
 
 def load_history():
@@ -183,6 +208,7 @@ def get_yesterday_from_history(history, today):
         return pd.DataFrame()
 
     yesterday = previous_dates[-1]
+
     return history[history["날짜"].astype(str) == yesterday].copy()
 
 
@@ -212,6 +238,7 @@ def get_streak_count(stock_name, history, today_result):
                 break
 
         return count
+
     except:
         return "확인불가"
 
@@ -238,10 +265,16 @@ def get_dropped_stocks(yesterday_df, today_all_df, today_result):
 
 
 def save_history(today, result):
-    save_df = result[
-        ["종목명", "등락률", "최근2주출현", "연속출현", "전고점상태"]
-    ].copy()
+    save_columns = [
+        "종목명",
+        "등락률",
+        "최근2주출현",
+        "연속출현",
+        "전고점상태",
+        "돌파유지일"
+    ]
 
+    save_df = result[save_columns].copy()
     save_df.insert(0, "날짜", today)
 
     history = load_history()
@@ -253,37 +286,6 @@ def save_history(today, result):
         history = save_df
 
     history.to_csv(HISTORY_FILE, index=False, encoding="utf-8-sig")
-
-
-def make_reason(row):
-    reasons = []
-
-    if isinstance(row.최근2주출현, int) and row.최근2주출현 >= 5:
-        reasons.append(f"최근2주출현 {row.최근2주출현}회")
-
-    if isinstance(row.연속출현, int) and row.연속출현 >= 2:
-        reasons.append(f"연속출현 {row.연속출현}일")
-
-    if "🚀" in str(row.전고점상태):
-        reasons.append(f"전고점 돌파({row.전고점상태})")
-    elif "🔥" in str(row.전고점상태):
-        reasons.append(f"전고점 근접({row.전고점상태})")
-
-    if not reasons:
-        reasons.append("상대강세 유지")
-
-    return ", ".join(reasons)
-
-
-def is_meaningful_stock(name):
-    exclude_keywords = [
-        "LG전자", "LG씨엔에스", "LG이노텍", "LG", "LG디스플레이", "LG화학", "LG에너지솔루션",
-        "삼성전기", "삼성에스디에스",
-        "현대오토에버", "현대모비스", "현대차", "현대글로비스",
-        "대덕전자", "NAVER"
-    ]
-
-    return not any(keyword == name for keyword in exclude_keywords)
 
 
 date, kospi_return = get_kospi_return()
@@ -306,10 +308,13 @@ result["최근2주출현"] = result["종목코드"].apply(
     lambda code: get_recent_outperform_count(code, kospi_recent_returns, date)
 )
 
-result["전고점상태"] = result.apply(
-    lambda row: get_high_status(row["종목코드"], row["현재가"]),
+high_infos = result.apply(
+    lambda row: get_high_info(row["종목코드"], row["현재가"]),
     axis=1
 )
+
+result["전고점상태"] = [x[0] for x in high_infos]
+result["돌파유지일"] = [x[1] for x in high_infos]
 
 history = load_history()
 
@@ -336,6 +341,7 @@ for i, row in enumerate(result.itertuples(), 1):
         <td>{recent_text}</td>
         <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
+        <td>{row.돌파유지일}</td>
     </tr>
     """
 
@@ -355,83 +361,9 @@ for i, row in enumerate(valid_counts.itertuples(), 1):
         <td>{row.최근2주출현}회</td>
         <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
+        <td>{row.돌파유지일}</td>
     </tr>
     """
-
-
-hidden = result.copy()
-hidden = hidden[
-    hidden["종목명"].apply(is_meaningful_stock)
-]
-
-hidden = hidden[
-    hidden["최근2주출현"].apply(lambda x: isinstance(x, int) and x >= 4)
-]
-
-hidden = hidden.sort_values(["최근2주출현", "등락률"], ascending=False).head(3)
-
-hidden_html = ""
-
-if hidden.empty:
-    hidden_html = """
-    <tr>
-        <td colspan="2">해당 종목 없음</td>
-    </tr>
-    """
-else:
-    for row in hidden.itertuples():
-        hidden_html += f"""
-        <tr>
-            <td>{row.종목명}</td>
-            <td>{make_reason(row)}</td>
-        </tr>
-        """
-
-
-meaningful = result.copy()
-
-median_return = result["등락률"].median()
-
-meaningful = meaningful[
-    meaningful["최근2주출현"].apply(lambda x: isinstance(x, int) and x >= 4)
-]
-
-meaningful = meaningful[
-    meaningful["등락률"] <= median_return
-]
-
-meaningful = meaningful.sort_values(
-    ["최근2주출현", "연속출현", "등락률"],
-    ascending=False
-).head(5)
-
-meaningful_html = ""
-
-if meaningful.empty:
-    meaningful_html = """
-    <tr>
-        <td colspan="2">해당 종목 없음</td>
-    </tr>
-    """
-else:
-    for row in meaningful.itertuples():
-        meaningful_html += f"""
-        <tr>
-            <td>{row.종목명}</td>
-            <td>{make_reason(row)}</td>
-        </tr>
-        """
-
-
-breakout = result[result["전고점상태"].astype(str).str.contains("🚀|🔥", na=False)]
-
-breakout_html = ""
-
-if breakout.empty:
-    breakout_html = "<li>전고점 돌파/근접 종목 없음</li>"
-else:
-    for row in breakout.itertuples():
-        breakout_html += f"<li>{row.종목명} - {row.전고점상태}</li>"
 
 
 dropped_html = ""
@@ -481,6 +413,7 @@ html_body = f"""
 <th>최근2주출현</th>
 <th>연속출현</th>
 <th>전고점대비</th>
+<th>돌파유지일</th>
 </tr>
 {rows_html}
 </table>
@@ -495,53 +428,14 @@ html_body = f"""
 <th>최근2주출현</th>
 <th>연속출현</th>
 <th>전고점대비</th>
+<th>돌파유지일</th>
 </tr>
 {top5_html}
 </table>
 
 <br>
 
-<h3>4. 오늘의 핵심</h3>
-<ul>
-<li><b>LG 그룹:</b> LG전자, LG씨엔에스, LG이노텍, LG 등 그룹주 강세 여부 확인</li>
-<li><b>AI / IT 인프라:</b> 삼성전기, 삼성에스디에스, 대덕전자, NAVER 등 강세 여부 확인</li>
-<li><b>자동차 전장:</b> 현대오토에버, 현대모비스, 현대차 등 강세 여부 확인</li>
-<li><b>전고점 돌파:</b> 전고점 대비 플러스 종목이 많을수록 시장 에너지가 강한 것으로 해석</li>
-</ul>
-
-<h3>5. 숨은 강세주 TOP3</h3>
-<table border="1" cellpadding="5" cellspacing="0">
-<tr>
-<th>종목명</th>
-<th>선정 이유</th>
-</tr>
-{hidden_html}
-</table>
-
-<br>
-
-<h3>6. 의미있는 강세주</h3>
-<p>최근2주출현이 높지만 당일 급등 상위권은 아닌, 조용하게 강한 종목입니다.</p>
-<table border="1" cellpadding="5" cellspacing="0">
-<tr>
-<th>종목명</th>
-<th>선정 이유</th>
-</tr>
-{meaningful_html}
-</table>
-
-<br>
-
-<h3>7. 다음 거래일 체크포인트</h3>
-<ul>
-<li>최근2주출현 TOP 종목이 다음 거래일에도 유지되는지 확인</li>
-<li>연속출현이 증가하는 종목 우선 관찰</li>
-<li>전고점 대비 플러스 종목이 돌파 후 버티는지 확인</li>
-<li>의미있는 강세주가 계속 상대강세 목록에 남는지 확인</li>
-<li>어제 있었지만 오늘 탈락한 종목은 강세 이탈 여부 확인</li>
-</ul>
-
-<h3>8. 어제 있었지만 오늘 탈락한 종목</h3>
+<h3>4. 어제 있었지만 오늘 탈락한 종목</h3>
 <table border="1" cellpadding="5" cellspacing="0">
 <tr>
 <th>종목</th>
@@ -563,7 +457,7 @@ html_body = f"""
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 연속출현 = 직전 리포트부터 오늘까지 연속으로 상대강세 목록에 포함된 일수입니다.</p>
 <p>※ 전고점대비 = 최근 약 100거래일 최고 종가 대비 현재가 위치입니다.</p>
-<p>※ 의미있는 강세주 = 최근2주출현 4회 이상이면서 당일 등락률이 상대강세 종목 중간값 이하인 종목입니다.</p>
+<p>※ 돌파유지일 = 각 거래일 기준 직전 100거래일 최고 종가를 연속으로 돌파/유지한 일수입니다.</p>
 <p>※ 탈락 종목은 직전 리포트에는 있었으나 오늘 상대강세 조건을 만족하지 못한 종목입니다.</p>
 <p>※ 데이터 출처 : 네이버 금융</p>
 <p>※ 투자 참고용 자료입니다.</p>
