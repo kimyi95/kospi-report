@@ -2,7 +2,7 @@ name: KOSPI Report
 
 on:
   schedule:
-    - cron: '50 6 * * 1-5'
+    - cron: '0 8 * * 1-5'
   workflow_dispatch:
 
 permissions:
