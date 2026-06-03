@@ -50,7 +50,6 @@ def get_kospi_return():
 
 def get_kospi_recent_returns():
     dfs = []
-
     for page in [1, 2]:
         url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
         html = get_html(url)
@@ -116,7 +115,7 @@ def get_stock_recent_returns(code):
     return dict(zip(df["날짜"], df["등락률"]))
 
 
-def get_recent_outperform_count(code, kospi_recent_returns, report_date):
+def get_recent_outperform_count(code, kospi_recent_returns, report_date, days=10):
     try:
         stock_returns = get_stock_recent_returns(code)
 
@@ -124,9 +123,10 @@ def get_recent_outperform_count(code, kospi_recent_returns, report_date):
             return "확인불가"
 
         count = 0
+        dates = list(kospi_recent_returns.keys())[:days]
 
-        for date, kospi_ret in kospi_recent_returns.items():
-            if date in stock_returns and stock_returns[date] > kospi_ret:
+        for date in dates:
+            if date in stock_returns and stock_returns[date] > kospi_recent_returns[date]:
                 count += 1
 
         return count
@@ -208,7 +208,6 @@ def get_yesterday_from_history(history, today):
         return pd.DataFrame()
 
     yesterday = previous_dates[-1]
-
     return history[history["날짜"].astype(str) == yesterday].copy()
 
 
@@ -268,6 +267,7 @@ def save_history(today, result):
     save_columns = [
         "종목명",
         "등락률",
+        "최근1주출현",
         "최근2주출현",
         "연속출현",
         "전고점상태",
@@ -304,8 +304,12 @@ for keyword in etf_keywords:
 result = df[df["등락률"] > kospi_return].copy()
 result = result.sort_values("등락률", ascending=False)
 
+result["최근1주출현"] = result["종목코드"].apply(
+    lambda code: get_recent_outperform_count(code, kospi_recent_returns, date, days=5)
+)
+
 result["최근2주출현"] = result["종목코드"].apply(
-    lambda code: get_recent_outperform_count(code, kospi_recent_returns, date)
+    lambda code: get_recent_outperform_count(code, kospi_recent_returns, date, days=10)
 )
 
 high_infos = result.apply(
@@ -329,7 +333,8 @@ dropped = get_dropped_stocks(yesterday_df, df, result)
 rows_html = ""
 
 for i, row in enumerate(result.itertuples(), 1):
-    recent_text = f"{row.최근2주출현}회" if isinstance(row.최근2주출현, int) else row.최근2주출현
+    week1_text = f"{row.최근1주출현}회" if isinstance(row.최근1주출현, int) else row.최근1주출현
+    week2_text = f"{row.최근2주출현}회" if isinstance(row.최근2주출현, int) else row.최근2주출현
     streak_text = f"{row.연속출현}일" if isinstance(row.연속출현, int) else row.연속출현
 
     rows_html += f"""
@@ -338,7 +343,8 @@ for i, row in enumerate(result.itertuples(), 1):
         <td>{row.종목명}</td>
         <td>{row.현재가:,}</td>
         <td>{row.등락률:+.2f}%</td>
-        <td>{recent_text}</td>
+        <td>{week1_text}</td>
+        <td>{week2_text}</td>
         <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
         <td>{row.돌파유지일}</td>
@@ -347,17 +353,22 @@ for i, row in enumerate(result.itertuples(), 1):
 
 
 valid_counts = result[result["최근2주출현"].apply(lambda x: isinstance(x, int))]
-valid_counts = valid_counts.sort_values("최근2주출현", ascending=False).head(5)
+valid_counts = valid_counts.sort_values(
+    ["최근2주출현", "최근1주출현", "연속출현"],
+    ascending=False
+).head(5)
 
 top5_html = ""
 
 for i, row in enumerate(valid_counts.itertuples(), 1):
+    week1_text = f"{row.최근1주출현}회" if isinstance(row.최근1주출현, int) else row.최근1주출현
     streak_text = f"{row.연속출현}일" if isinstance(row.연속출현, int) else row.연속출현
 
     top5_html += f"""
     <tr>
         <td>{i}</td>
         <td>{row.종목명}</td>
+        <td>{week1_text}</td>
         <td>{row.최근2주출현}회</td>
         <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
@@ -410,6 +421,7 @@ html_body = f"""
 <th>종목명</th>
 <th>현재가</th>
 <th>등락률</th>
+<th>최근1주출현</th>
 <th>최근2주출현</th>
 <th>연속출현</th>
 <th>전고점대비</th>
@@ -425,6 +437,7 @@ html_body = f"""
 <tr>
 <th>순위</th>
 <th>종목명</th>
+<th>최근1주출현</th>
 <th>최근2주출현</th>
 <th>연속출현</th>
 <th>전고점대비</th>
@@ -454,6 +467,7 @@ html_body = f"""
 <li>KOSPI 하락일 : KOSPI보다 덜 하락했거나 상승</li>
 </ul>
 
+<p>※ 최근1주출현 = 최근 5거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 최근2주출현 = 최근 10거래일 동안 KOSPI보다 강했던 횟수입니다.</p>
 <p>※ 연속출현 = 직전 리포트부터 오늘까지 연속으로 상대강세 목록에 포함된 일수입니다.</p>
 <p>※ 전고점대비 = 최근 약 100거래일 최고 종가 대비 현재가 위치입니다.</p>
