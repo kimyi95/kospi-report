@@ -343,8 +343,8 @@ for i, row in enumerate(result.itertuples(), 1):
         <td>{row.종목명}</td>
         <td>{row.현재가:,}</td>
         <td>{row.등락률:+.2f}%</td>
-        <td>{week1_text}</td>
         <td>{week2_text}</td>
+        <td>{week1_text}</td>
         <td>{streak_text}</td>
         <td>{row.전고점상태}</td>
         <td>{row.돌파유지일}</td>
@@ -421,8 +421,8 @@ html_body = f"""
 <th>종목명</th>
 <th>현재가</th>
 <th>등락률</th>
-<th>최근1주출현</th>
 <th>최근2주출현</th>
+<th>최근1주출현</th>
 <th>연속출현</th>
 <th>전고점대비</th>
 <th>돌파유지일</th>
